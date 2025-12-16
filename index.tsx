@@ -9,101 +9,74 @@
  * @version 2.0.0
  */
 
-import definePlugin from "@utils/types";
-import { definePluginSettings } from "@api/Settings";
-import { ApplicationCommandInputType } from "@api/Commands";
-import { findByProps } from "@webpack";
+// ==================== 10AntiMove Plugin ====================
+const { Plugin, Settings, Flux } = window.Vencord;
 
-/* ========== STORES ========== */
-const VoiceActions = findByProps("selectVoiceChannel");
-const UserStore = findByProps("getCurrentUser");
-const DMUtils = findByProps("openPrivateChannel");
-const RelationshipStore = findByProps("addRelationship");
-
-/* ========== SETTINGS ========== */
-const settings = definePluginSettings({
-    antiMove: { type: "boolean", description: "منع السحب", default: true },
-    notifySound: { type: "boolean", description: "صوت تنبيه", default: true },
-    autoDM: { type: "boolean", description: "DM تلقائي", default: true },
-    trollMode: { type: "boolean", description: "وضع استفزاز 😂", default: false },
-    lockRoom: { type: "boolean", description: "قفل الروم", default: true },
-    autoBlockAfter: { type: "number", description: "حظر بعد كم محاولة", default: 3 },
-    ignoredUsers: { type: "string", description: "IDs متجاهلة", default: "" }
+const settings = new Settings("10AntiMove", {
+    antiMove: { type: "boolean", default: true, description: "منع السحب" },
+    notifySound: { type: "boolean", default: true, description: "صوت تنبيه" },
+    autoDM: { type: "boolean", default: true, description: "DM تلقائي" },
+    trollMode: { type: "boolean", default: false, description: "وضع استفزاز 😂" },
+    lockRoom: { type: "boolean", default: true, description: "قفل الروم" },
+    autoBlockAfter: { type: "number", default: 3, description: "حظر بعد كم محاولة" },
+    ignoredUsers: { type: "string", default: "", description: "IDs متجاهلة" }
 });
 
-/* ========== STATE ========== */
-let lastVoiceChannelId: string | null = null;
-const attempts: Record<string, number> = {};
+let lastChannelId = null;
+const attempts = {};
 
-/* ========== UI ========== */
-function overlay(text: string) {
+function overlay(text) {
     const el = document.createElement("div");
     el.textContent = text;
     el.style.cssText = `
-        position:fixed;
-        bottom:20px;
-        right:20px;
-        background:#0f172a;
-        color:#fff;
-        padding:12px 16px;
-        border-radius:10px;
-        z-index:9999;
-        font-size:14px;
-        box-shadow:0 10px 25px rgba(0,0,0,.4);
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background: #0f172a;
+        color: #fff;
+        padding: 12px 16px;
+        border-radius: 10px;
+        z-index: 9999;
+        font-size: 14px;
+        box-shadow: 0 10px 25px rgba(0,0,0,.4);
     `;
     document.body.appendChild(el);
-    setTimeout(() => el.remove(), 4500);
+    setTimeout(() => el.remove(), 4000);
 }
 
-/* ========== PLUGIN ========== */
-export default definePlugin({
-    name: "10AntiMove",
-    description: "حماية كاملة من سحب الرومات 🔒",
-    authors: [{ name: "10" }],
-    settings,
-
+class AntiMovePlugin extends Plugin {
     start() {
         console.log("🛡️ 10AntiMove شغال");
 
-        // Slash Command
+        // ====== أمر /antimove ======
         this.registerCommand({
             name: "antimove",
             description: "تشغيل / إيقاف منع السحب",
-            inputType: ApplicationCommandInputType.BUILT_IN,
             execute: () => {
                 settings.store.antiMove = !settings.store.antiMove;
-                return {
-                    content: `🛡️ AntiMove: ${settings.store.antiMove ? "مفعل ✅" : "موقف ❌"}`
-                };
+                return `🛡️ AntiMove: ${settings.store.antiMove ? "مفعل ✅" : "موقف ❌"}`;
             }
         });
 
-        // Voice Protection
-        this.addFluxListener("VOICE_STATE_UPDATE", async (p: any) => {
-            const myId = UserStore.getCurrentUser()?.id;
-            if (!myId || p.userId !== myId) return;
+        // ====== حماية الروم ======
+        this.addListener("VOICE_STATE_UPDATE", async (data) => {
+            const myId = window.DiscordNative?.getCurrentUser()?.id || data.userId;
+            if (!myId || data.userId !== myId) return;
 
-            if (p.channelId) {
-                lastVoiceChannelId = p.channelId;
-                return;
-            }
+            if (data.channelId) lastChannelId = data.channelId;
 
-            if (!settings.store.antiMove || !lastVoiceChannelId) return;
+            if (!settings.store.antiMove || !lastChannelId) return;
 
-            const executorId = p?.member?.user?.id;
+            const executorId = data?.member?.user?.id;
             if (!executorId) return;
 
-            const ignored = settings.store.ignoredUsers
-                .split(",")
-                .map(x => x.trim())
-                .filter(Boolean);
-
+            const ignored = settings.store.ignoredUsers.split(",").map(x => x.trim()).filter(Boolean);
             if (ignored.includes(executorId)) return;
 
             attempts[executorId] = (attempts[executorId] || 0) + 1;
 
             // رجوع فوري
-            VoiceActions.selectVoiceChannel(lastVoiceChannelId);
+            window.Vencord.findModule("VoiceActions")?.selectVoiceChannel(lastChannelId);
 
             // صوت
             if (settings.store.notifySound) {
@@ -114,12 +87,9 @@ export default definePlugin({
             overlay(`🚨 محاولة سحب من <@${executorId}> (${attempts[executorId]})`);
 
             // DM لك
-            const me = await DMUtils.openPrivateChannel(myId);
+            const me = await window.Vencord.findModule("DMUtils")?.openPrivateChannel(myId);
             me?.sendMessage?.({
-                content:
-                    `🛡️ محاولة سحب\n` +
-                    `👤 <@${executorId}>\n` +
-                    `🔢 العدد: ${attempts[executorId]}`
+                content: `🛡️ محاولة سحب\n👤 <@${executorId}>\n🔢 العدد: ${attempts[executorId]}`
             });
 
             // DM له
@@ -131,20 +101,22 @@ export default definePlugin({
                             ? "😂 رجعت غصب… لا تحاول"
                             : "تنبيه: لا يمكن سحبي من الروم.";
 
-                const him = await DMUtils.openPrivateChannel(executorId);
+                const him = await window.Vencord.findModule("DMUtils")?.openPrivateChannel(executorId);
                 him?.sendMessage?.({ content: msg });
             }
 
             // حظر تلقائي
             if (attempts[executorId] >= settings.store.autoBlockAfter) {
-                RelationshipStore.addRelationship(executorId, 2);
+                window.Vencord.findModule("RelationshipStore")?.addRelationship(executorId, 2);
             }
 
             console.log("🛡️ AntiMove", executorId, attempts[executorId]);
         });
-    },
+    }
 
     stop() {
         console.log("🛑 10AntiMove توقف");
     }
-});
+}
+
+export default AntiMovePlugin;
